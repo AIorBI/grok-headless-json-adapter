@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "sentiment": { "type": "string" },
+    "confidence": { "type": "number" },
+    "summary": { "type": "string" }
+  },
+  "required": ["sentiment", "confidence", "summary"],
+  "additionalProperties": false
+}
