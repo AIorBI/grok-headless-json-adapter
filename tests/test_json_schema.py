@@ -29,6 +29,20 @@ def test_infer_schema_from_bullets():
     assert set(schema["required"]) == {"sentiment", "confidence", "summary"}
 
 
+def test_infer_schema_fields_line_ignores_example_block():
+    contract = """Return JSON with fields: sentiment, confidence, summary
+
+Example:
+
+```json
+{"sentiment": "positive", "confidence": 0.9, "summary": "User is happy"}
+```
+"""
+    schema = infer_schema_from_contract(contract)
+    assert set(schema["required"]) == {"sentiment", "confidence", "summary"}
+    assert "summary_example" not in schema["properties"]
+
+
 def test_infer_schema_from_json_example():
     contract = '```json\n{"foo": 1, "bar": true}\n```'
     schema = infer_schema_from_contract(contract)

@@ -95,13 +95,13 @@ def infer_schema_from_contract(contract: str) -> dict[str, Any]:
         required.append(name)
 
     fields_match = re.search(
-        r"(?:fields?|keys?|properties)\s*:\s*([a-zA-Z0-9_,\s]+)",
+        r"(?:fields?|keys?|properties)\s*:\s*([a-zA-Z0-9_, ]+)",
         text,
         flags=re.IGNORECASE,
     )
     if fields_match:
         for raw in fields_match.group(1).split(","):
-            name = _normalize_field_name(raw)
+            name = _normalize_field_name(raw.strip())
             if name and name not in properties:
                 properties[name] = {"type": _guess_type(name)}
                 required.append(name)
