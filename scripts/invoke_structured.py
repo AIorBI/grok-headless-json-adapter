@@ -33,10 +33,17 @@ def invoke_structured(
         disallow_tools=disallow_tools,
     )
     argv[0] = grok_bin
-    proc = subprocess.run(argv, capture_output=True, text=True)
-    if proc.returncode != 0 and not proc.stdout.strip():
-        raise RuntimeError(proc.stderr.strip() or f"grok exited {proc.returncode}")
-    return parse_structured_response(proc.stdout)
+    last_error: Exception | None = None
+    for attempt in range(3):
+        proc = subprocess.run(argv, capture_output=True, text=True)
+        if proc.returncode != 0 and not proc.stdout.strip():
+            last_error = RuntimeError(proc.stderr.strip() or f"grok exited {proc.returncode}")
+            continue
+        try:
+            return parse_structured_response(proc.stdout)
+        except ValueError as exc:
+            last_error = exc
+    raise last_error or RuntimeError("structured invocation failed")
 
 
 def main(argv: list[str] | None = None) -> int:
