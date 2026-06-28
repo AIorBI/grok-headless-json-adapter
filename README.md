@@ -73,9 +73,12 @@ Adapt the sample:
 
 ```bash
 python3 .grok/skills/adapt-headless-json/scripts/adapt.py --adapt examples/old-skill.md
+python3 .grok/skills/adapt-headless-json/scripts/adapt.py --write examples/old-skill.md
 python3 .grok/skills/adapt-headless-json/scripts/adapt.py --detect examples/old-skill.md
 python3 .grok/skills/adapt-headless-json/scripts/adapt.py --schema examples/old-skill.md
 ```
+
+`--write` emits `examples/old-skill.adapted.md` plus `examples/schemas/<skill-name>.schema.json` for direct use with `invoke_structured.py`.
 
 ## Tests
 
