@@ -22,7 +22,7 @@ Migrate project skills from legacy `grok -p ... | jq -r '.text'` workflows to **
 ## Prerequisites
 
 - Grok Build **0.2.67+** (`grok --version`)
-- This repo loaded under `.grok/skills/adapt-headless-json/` (see README.md)
+- This repo loaded under `.grok/skills/adapt-headless-json/` including its `schemas/` directory (see README.md)
 
 ## Workflow
 
@@ -34,15 +34,11 @@ Read the skill's `SKILL.md` (or pasted content). Identify:
 - `jq` on `.text` or manual markdown/JSON extraction
 - Implicit output contracts (bullets, example JSON blocks, "Return JSON with fields: ...")
 
-Run the detector (pure, no side effects):
-
 ```bash
 python3 .grok/skills/adapt-headless-json/scripts/adapt.py --detect path/to/SKILL.md
 ```
 
 ### 2. Infer schema
-
-Extract the output contract section and infer a JSON Schema:
 
 ```bash
 python3 .grok/skills/adapt-headless-json/scripts/adapt.py --schema path/to/SKILL.md
@@ -50,16 +46,27 @@ python3 .grok/skills/adapt-headless-json/scripts/adapt.py --schema path/to/SKILL
 
 Edit the schema if needed — it must match what downstream steps consume.
 
-### 3. Produce adapted skill
+### 3. Produce adapted skill + schema (preferred)
 
-Generate a refactored `SKILL.md` that:
+`--write` emits the adapted markdown **and** writes the schema to the adapter's canonical location:
 
-- Replaces jq/.text parsing with `structuredOutput`
-- Documents the `--json-schema` value
-- Uses the bundled wrapper for invocations
+```
+.grok/skills/adapt-headless-json/schemas/<skill-name>.schema.json
+```
 
 ```bash
-python3 .grok/skills/adapt-headless-json/scripts/adapt.py --adapt path/to/SKILL.md > path/to/SKILL.adapted.md
+python3 .grok/skills/adapt-headless-json/scripts/adapt.py --write path/to/SKILL.md
+```
+
+Outputs:
+
+- `path/to/SKILL.adapted.md` — refactored skill with `@.grok/skills/adapt-headless-json/schemas/...` paths
+- `.grok/skills/adapt-headless-json/schemas/<skill-name>.schema.json` — inferred schema (required for `@` paths in the adapted file)
+
+Preview only (no files written):
+
+```bash
+python3 .grok/skills/adapt-headless-json/scripts/adapt.py --adapt path/to/SKILL.md
 ```
 
 Review the diff. Merge orchestration steps the adapter preserved; keep project-specific MCP/tool guidance.
@@ -78,22 +85,22 @@ grok -p "..." \
 
 **Consume `structuredOutput` directly** — never re-parse `.text`.
 
-Preferred wrapper (same argv, parses response):
+Preferred wrapper (uses the schema file written by `--write`):
 
 ```bash
 python3 .grok/skills/adapt-headless-json/scripts/invoke_structured.py \
   --prompt "..." \
-  --schema '{"type":"object","properties":{...},"required":[...]}'
+  --schema @.grok/skills/adapt-headless-json/schemas/<skill-name>.schema.json
 ```
 
 ### 5. Verify
 
-Run the adapted wrapper twice on a representative prompt. Both runs must return non-empty `structuredOutput` whose keys match the schema `required` list.
+Run the **exact** wrapper command from the produced `*.adapted.md` twice. Both runs must return non-empty `structuredOutput` whose keys match the schema `required` list.
 
 ```bash
 python3 .grok/skills/adapt-headless-json/scripts/invoke_structured.py \
   --prompt "test prompt" \
-  --schema @.grok/skills/adapt-headless-json/examples/sentiment.schema.json
+  --schema @.grok/skills/adapt-headless-json/schemas/sentiment-extract.schema.json
 ```
 
 ## Helper scripts (this repo)
@@ -101,7 +108,7 @@ python3 .grok/skills/adapt-headless-json/scripts/invoke_structured.py \
 | Script | Purpose |
 |--------|---------|
 | `scripts/json_schema.py` | `infer_schema_from_contract`, `schema_to_cli_arg`, `parse_structured_response`, `build_grok_argv` |
-| `scripts/adapt.py` | `detect_legacy_patterns`, `adapt_skill`, CLI for detect/schema/adapt |
+| `scripts/adapt.py` | `detect_legacy_patterns`, `adapt_skill`, `--write` for adapted SKILL + schema |
 | `scripts/invoke_structured.py` | Shell grok with schema; print `structuredOutput` JSON |
 
 ## Adaptation rules
@@ -110,8 +117,8 @@ python3 .grok/skills/adapt-headless-json/scripts/invoke_structured.py \
 2. **Replace parse steps** — delete jq/markdown extraction; read `structuredOutput` keys.
 3. **Keep agent orchestration** — only change headless I/O, not vault/MCP/business logic.
 4. **Use `--verbatim`** when the model adds preamble before JSON (common without it).
-5. **Document the schema** inline in the adapted skill for future edits.
+5. **Always `--write`** so the `@.grok/skills/adapt-headless-json/schemas/...` path exists on disk.
 
 ## Example
 
-See `examples/old-skill.md` (legacy) and `examples/new-skill.md` (adapted sentiment extractor).
+See `examples/old-skill.md` (legacy) and `examples/new-skill.md` (adapted sentiment extractor). Shipped schema: `schemas/sentiment-extract.schema.json`.

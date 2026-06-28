@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from pathlib import Path
@@ -25,6 +26,8 @@ LEGACY_BASH = re.compile(
     r"```bash\s*\n.*?grok\s+-p.*?```",
     flags=re.DOTALL | re.IGNORECASE,
 )
+
+INVOKE_BLOCK = re.compile(r"```bash\s*\n(python3 .*?invoke_structured\.py.*?)\n```", re.DOTALL)
 
 
 def detect_legacy_patterns(skill_md: str) -> list[str]:
@@ -59,6 +62,33 @@ def extract_steps_section(skill_md: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def schema_file_rel(skill_name: str) -> str:
+    return f"{ADAPTER_SKILL_ROOT}/schemas/{skill_name}.schema.json"
+
+
+def resolve_adapter_root(skill_path: Path, explicit: Path | None = None) -> Path:
+    """Locate the on-disk adapt-headless-json skill root."""
+    if explicit is not None:
+        root = explicit.expanduser().resolve()
+        if not (root / "SKILL.md").is_file():
+            raise ValueError(f"adapter root missing SKILL.md: {root}")
+        return root
+
+    resolved = skill_path.expanduser().resolve()
+    for parent in [resolved, *resolved.parents]:
+        if (parent / "SKILL.md").is_file() and (parent / "scripts" / "adapt.py").is_file():
+            return parent
+
+    cwd_candidate = (Path.cwd() / ADAPTER_SKILL_ROOT).resolve()
+    if (cwd_candidate / "SKILL.md").is_file():
+        return cwd_candidate
+
+    raise ValueError(
+        "Cannot find adapt-headless-json adapter root. "
+        "Load the adapter under .grok/skills/adapt-headless-json/ or pass --adapter-root."
+    )
+
+
 def adapt_steps_section(steps_md: str, schema: dict[str, Any], *, skill_name: str) -> str:
     """Rewrite legacy headless steps to use structuredOutput while keeping flow."""
     if not steps_md.strip():
@@ -70,7 +100,7 @@ def adapt_steps_section(steps_md: str, schema: dict[str, Any], *, skill_name: st
             "4. On `structuredOutputError`, retry with a shorter prompt."
         )
 
-    schema_path = f"{ADAPTER_SKILL_ROOT}/schemas/{skill_name}.schema.json"
+    schema_path = schema_file_rel(skill_name)
     wrapper_block = emit_invocation_snippet(
         schema,
         prompt_placeholder="Analyze sentiment for: $INPUT",
@@ -81,7 +111,7 @@ def adapt_steps_section(steps_md: str, schema: dict[str, Any], *, skill_name: st
     adapted = LEGACY_BASH.sub(f"```bash\n{wrapper_block}\n```", adapted)
     adapted = re.sub(
         r"(?i)parse.*(?:markdown|json|assistant text|\.text).*",
-        "Read `sentiment`, `confidence`, and `summary` directly from structuredOutput stdout (no re-parse).",
+        "Read structuredOutput keys directly from wrapper stdout (no re-parse).",
         adapted,
     )
     adapted = re.sub(
@@ -118,8 +148,20 @@ def emit_direct_grok_snippet(schema: dict[str, Any], prompt_placeholder: str = "
     )
 
 
-def schema_file_rel(skill_name: str) -> str:
-    return f"{ADAPTER_SKILL_ROOT}/schemas/{skill_name}.schema.json"
+def extract_invoke_command(adapted_md: str) -> str:
+    """Return the first invoke_structured.py bash block from adapted markdown."""
+    match = INVOKE_BLOCK.search(adapted_md or "")
+    if not match:
+        raise ValueError("no invoke_structured.py command block in adapted skill")
+    return re.sub(r"\\\n\s*", " ", match.group(1).strip())
+
+
+def extract_schema_at_path(adapted_md: str) -> str:
+    """Return the @...schema.json path referenced in adapted markdown."""
+    match = re.search(r"--schema\s+(@\S+\.schema\.json)", adapted_md or "")
+    if not match:
+        raise ValueError("no --schema @path in adapted skill")
+    return match.group(1)
 
 
 def adapt_skill(skill_md: str, *, skill_name: str | None = None) -> str:
@@ -164,7 +206,7 @@ Direct grok call (equivalent):
 
 ## Output contract
 
-Save schema to `{schema_rel}` and invoke with `--schema @{schema_rel}`.
+Schema lives at `{schema_rel}` (written by `adapt.py --write`).
 
 ```json
 {schema_json}
@@ -191,43 +233,46 @@ def write_adapted_artifacts(
     skill_path: str | Path,
     *,
     output_dir: str | Path | None = None,
+    adapter_root: str | Path | None = None,
 ) -> dict[str, Path]:
-    """Write adapted SKILL.md and inferred schema JSON alongside the source skill."""
+    """Write adapted SKILL.md and schema under the adapter root schemas/ dir."""
     source = Path(skill_path)
-    out_dir = Path(output_dir) if output_dir else source.parent
+    adapter = resolve_adapter_root(source, Path(adapter_root) if adapter_root else None)
     text = source.read_text(encoding="utf-8")
     name_match = re.search(r"^name:\s*([^\n]+)", text, flags=re.MULTILINE)
     skill_name = (name_match.group(1).strip() if name_match else source.stem).strip()
 
     contract = extract_output_contract(text)
     schema = infer_schema_from_contract(contract)
-    schema_dir = out_dir / "schemas"
+
+    schema_dir = adapter / "schemas"
     schema_dir.mkdir(parents=True, exist_ok=True)
     schema_path = schema_dir / f"{skill_name}.schema.json"
-
-    import json
-
     schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+
+    out_dir = Path(output_dir) if output_dir else source.parent
     adapted_path = out_dir / f"{source.stem}.adapted.md"
     adapted_path.write_text(adapt_skill(text, skill_name=skill_name), encoding="utf-8")
-    return {"adapted": adapted_path, "schema": schema_path}
+
+    return {"adapted": adapted_path, "schema": schema_path, "adapter_root": adapter}
 
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
-    import json
     import sys
 
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--adapter-root", metavar="PATH", help="Path to adapt-headless-json skill root")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--detect", metavar="SKILL.md", help="List legacy headless patterns")
     group.add_argument("--schema", metavar="SKILL.md", help="Print inferred JSON schema")
     group.add_argument("--adapt", metavar="SKILL.md", help="Print adapted SKILL.md")
-    group.add_argument("--write", metavar="SKILL.md", help="Write adapted SKILL + schema files")
+    group.add_argument("--write", metavar="SKILL.md", help="Write adapted SKILL + schema under adapter/schemas/")
     args = parser.parse_args(argv)
 
     skill_path = Path(args.detect or args.schema or args.adapt or args.write)
     text = skill_path.read_text(encoding="utf-8")
+    adapter_root = Path(args.adapter_root) if args.adapter_root else None
 
     if args.detect:
         for label in detect_legacy_patterns(text):
@@ -242,7 +287,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.write:
-        paths = write_adapted_artifacts(skill_path)
+        paths = write_adapted_artifacts(skill_path, adapter_root=adapter_root)
         print(paths["adapted"])
         print(paths["schema"])
         return 0
