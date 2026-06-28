@@ -143,6 +143,21 @@ def infer_schema_from_contract(contract: str) -> dict[str, Any]:
     return schema
 
 
+STRUCTURED_DISALLOWED_TOOLS = (
+    "run_terminal_cmd,read_file,grep,list_dir,search_replace,write,delete_file,"
+    "web_search,web_fetch,Agent,Read,Grep,Glob,Bash,WebSearch,WebFetch"
+)
+
+
+def wrap_structured_prompt(prompt: str, schema: dict[str, Any]) -> str:
+    """Prefix prompt so the model returns schema-shaped JSON without tool use."""
+    fields = ", ".join(schema.get("required") or schema.get("properties", {}).keys())
+    return (
+        f"Return ONLY JSON matching the schema. Required fields: {fields}. "
+        f"No tools, no preamble. Task: {prompt}"
+    )
+
+
 def build_grok_argv(
     prompt: str,
     schema: dict[str, Any],
@@ -151,12 +166,13 @@ def build_grok_argv(
     yolo: bool = True,
     verbatim: bool = True,
     max_turns: int = 1,
+    disallow_tools: bool = True,
 ) -> list[str]:
     """Build argv for ``grok -p ... --json-schema ... --output-format json``."""
     argv = [
         "grok",
         "-p",
-        prompt,
+        wrap_structured_prompt(prompt, schema),
         "--json-schema",
         schema_to_cli_arg(schema),
         "--output-format",
@@ -170,4 +186,6 @@ def build_grok_argv(
         argv.append("--yolo")
     if verbatim:
         argv.append("--verbatim")
+    if disallow_tools:
+        argv.extend(["--disallowed-tools", STRUCTURED_DISALLOWED_TOOLS])
     return argv

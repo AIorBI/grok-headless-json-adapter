@@ -20,6 +20,7 @@ def invoke_structured(
     yolo: bool = True,
     verbatim: bool = True,
     max_turns: int = 1,
+    disallow_tools: bool = True,
     grok_bin: str = "grok",
 ) -> dict:
     argv = build_grok_argv(
@@ -29,6 +30,7 @@ def invoke_structured(
         yolo=yolo,
         verbatim=verbatim,
         max_turns=max_turns,
+        disallow_tools=disallow_tools,
     )
     argv[0] = grok_bin
     proc = subprocess.run(argv, capture_output=True, text=True)

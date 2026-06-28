@@ -69,3 +69,6 @@ def test_build_grok_argv_includes_json_schema():
     assert argv[argv.index("--cwd") + 1] == "/tmp/proj"
     assert "--yolo" in argv
     assert "--verbatim" in argv
+    assert "--disallowed-tools" in argv
+    prompt_idx = argv.index("-p") + 1
+    assert "Return ONLY JSON" in argv[prompt_idx]
